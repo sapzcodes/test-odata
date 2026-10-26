@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SAP Connection Test</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b2430; --mute:#6b7685; --line:#e2e6ec; --ok:#17803d; --bad:#b42318; --warn:#b54708; --acc:#0b5fff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12161c; --card:#1a2028; --ink:#e8ecf2; --mute:#98a2b3; --line:#2b3440; --ok:#4ade80; --bad:#f97066; --warn:#fdb022; --acc:#6ea0ff; } }
+  * { box-sizing:border-box }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  main { max-width:820px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:20px; margin:0 0 4px } .sub { color:var(--mute); margin:0 0 20px }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px } @media (max-width:600px){ .grid{grid-template-columns:1fr} }
+  label { display:block; font-size:12px; color:var(--mute); margin-bottom:4px } .full { grid-column:1/-1 }
+  input { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit }
+  button { margin-top:14px; padding:10px 18px; border:0; border-radius:8px; background:var(--acc); color:#fff; font:inherit; font-weight:600; cursor:pointer }
+  button:disabled { opacity:.6; cursor:wait }
+  .status { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; font-weight:600 }
+  .pill { padding:2px 10px; border-radius:99px; font-size:13px; border:1px solid currentColor }
+  .ok { color:var(--ok) } .bad { color:var(--bad) } .warn { color:var(--warn) }
+  .msg { margin:8px 0 0; color:var(--ink) } .msg ul { margin:6px 0 0; padding-left:20px; color:var(--mute) }
+  .meta { color:var(--mute); font-size:13px; margin-top:6px; word-break:break-all }
+  .scroll { overflow:auto; margin-top:12px } table { border-collapse:collapse; width:100%; font-size:13px }
+  th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); white-space:nowrap } th { color:var(--mute); font-weight:600 }
+  details { margin-top:12px } summary { cursor:pointer; color:var(--mute) } pre { overflow:auto; background:var(--bg); padding:10px; border-radius:8px; font-size:12px; max-height:260px }
+  .note { color:var(--mute); font-size:13px }
+</style>
+</head>
+<body>
+<main>
+  <h1>SAP Connection Test</h1>
+  <p class="sub">Browser &rarr; SAP OData directly. Your user and password stay in this page's memory and are sent only to the SAP URL below. Nothing is saved.</p>
+
+  <form id="f" class="card" autocomplete="off">
+    <div class="grid">
+      <div class="full"><label for="base">SAP base URL</label><input id="base" value="https://s4hanaabap.fortun8tech.com:44300" required></div>
+      <div><label for="svc">Service path</label><input id="svc" value="/sap/opu/odata/sap/ZSB_MIS_REPORT" required></div>
+      <div><label for="ent">Entity set</label><input id="ent" value="SalesMonthSet" required></div>
+      <div><label for="flt">$filter (optional)</label><input id="flt" value="CompanyCode eq '1000'"></div>
+      <div><label for="cli">sap-client (optional)</label><input id="cli" placeholder="e.g. 100"></div>
+      <div><label for="usr">SAP user</label><input id="usr" autocomplete="username" required></div>
+      <div><label for="pwd">SAP password</label><input id="pwd" type="password" autocomplete="current-password" required></div>
+    </div>
+    <button id="go" type="submit">Test connection</button>
+  </form>
+
+  <section id="out" class="card" hidden>
+    <div class="status"><span id="pill" class="pill"></span><span id="head"></span></div>
+    <div id="msg" class="msg"></div>
+    <div id="meta" class="meta"></div>
+    <div class="scroll"><table id="tbl"></table></div>
+    <details><summary>Raw response</summary><pre id="raw"></pre></details>
+  </section>
+
+  <p class="note">Wrong password repeated many times locks the SAP user (default 12 attempts). If the first try fails with 401, check the password before retrying.</p>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+$("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("go"); btn.disabled = true; btn.textContent = "Testing...";
+  const base = $("base").value.trim().replace(/\/+$/, "");
+  const svc = $("svc").value.trim().replace(/\/+$/, "");
+  const q = new URLSearchParams({ "$format": "json", "$top": "5" });
+  if ($("flt").value.trim()) q.set("$filter", $("flt").value.trim());
+  if ($("cli").value.trim()) q.set("sap-client", $("cli").value.trim());
+  const url = `${base}${svc}/${$("ent").value.trim()}?${q}`;
+
+  // Basic auth header, UTF-8 safe. This is exactly what SAP checks.
+  const auth = "Basic " + btoa(unescape(encodeURIComponent($("usr").value + ":" + $("pwd").value)));
+  const t0 = performance.now();
+  let res, text = "";
+  try {
+    res = await fetch(url, { headers: { Accept: "application/json", Authorization: auth }, credentials: "omit" });
+    text = await res.text();
+  } catch (err) {
+    return show("bad", "No response", "Browser could not reach SAP", [
+      "CORS: SAP did not send Access-Control-Allow-Origin for this site (most likely). Ask the SAP basis admin to allow this site's origin, or use a small server in between.",
+      "Certificate: the SAP host uses a self-signed cert. Open the SAP URL once in this browser and accept it, or install the CA cert.",
+      "Network: SAP host/port not reachable from this device (VPN, firewall, wrong URL).",
+    ], url, "", btn);
+  }
+  const ms = Math.round(performance.now() - t0);
+  const meta = `${res.status} ${res.statusText} - ${ms} ms - ${url}`;
+
+  if (res.status === 401) return show("bad", "401 Unauthorized", "SAP rejected the user/password", ["Check the user name and password (case-sensitive password).", "User may be locked or the password expired. Log in once in SAP GUI.", "Wrong client: add sap-client."], meta, text, btn);
+  if (res.status === 403) return show("warn", "403 Forbidden", "Login worked, but no authorisation", ["User lacks the service start authorisation (S_SERVICE) or the service is not active for this user."], meta, text, btn);
+  if (res.status === 404) return show("warn", "404 Not found", "Wrong service path or entity set name", ["Service not activated in /IWFND/MAINT_SERVICE, or a typo in the path / entity set."], meta, text, btn);
+  if (!res.ok) return show("bad", res.status + " " + res.statusText, "SAP returned an error", [], meta, text, btn);
+
+  let rows = [];
+  try { const j = JSON.parse(text); rows = j.d?.results ?? j.value ?? (j.d ? [j.d] : []); } catch {}
+  show("ok", "200 OK", `Credentials accepted. ${rows.length} row(s) returned.`, rows.length ? [] : ["Empty result: login is fine, but the filter matched nothing or the user's data authorisation hides all rows."], meta, text, btn, rows);
+});
+
+function show(cls, pill, head, bullets, meta, raw, btn, rows = []) {
+  $("out").hidden = false;
+  const p = $("pill"); p.textContent = pill; p.className = "pill " + cls;
+  $("head").textContent = head; $("head").className = cls;
+  $("msg").innerHTML = bullets.length ? "<ul>" + bullets.map((b) => `<li>${esc(b)}</li>`).join("") + "</ul>" : "";
+  $("meta").textContent = meta;
+  $("raw").textContent = raw ? tryPretty(raw) : "(no response body)";
+  const t = $("tbl"); t.innerHTML = "";
+  if (rows.length) {
+    const cols = Object.keys(rows[0]).filter((k) => k !== "__metadata");
+    t.innerHTML = "<tr>" + cols.map((c) => `<th>${esc(c)}</th>`).join("") + "</tr>" +
+      rows.map((r) => "<tr>" + cols.map((c) => `<td>${esc(String(r[c] ?? ""))}</td>`).join("") + "</tr>").join("");
+  }
+  btn.disabled = false; btn.textContent = "Test connection";
+}
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const tryPretty = (s) => { try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; } };
+</script>
+</body>
+</html>
